@@ -1,12 +1,12 @@
 import { type BobSettings, type RuntimeMode } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 /**
  * Environment variable that, when set, is forwarded to the Bob Shell process as
@@ -18,13 +18,13 @@ export const BOB_API_KEY_ENV = "BOBSHELL_API_KEY";
  * ACP authenticate method used when no API key is present — Bob Shell opens
  * an IBM SSO browser page and stores the resulting token locally.
  */
-export const BOB_AUTH_METHOD_SSO = "sso";
+const BOB_AUTH_METHOD_SSO = "sso";
 
 /**
  * ACP authenticate method used when BOBSHELL_API_KEY is set in the process
  * environment forwarded to the Bob Shell process.
  */
-export const BOB_AUTH_METHOD_API_KEY = "api_key";
+const BOB_AUTH_METHOD_API_KEY = "api_key";
 
 type BobAcpRuntimeBobSettings = Pick<BobSettings, "binaryPath">;
 
@@ -33,7 +33,7 @@ type BobAcpRuntimeBobSettings = Pick<BobSettings, "binaryPath">;
  * Bob Shell maps permissions via --auto-approve; workspace trust is handled by
  * always passing --trust since T3 Code users explicitly choose the project.
  */
-export function bobAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
+function bobAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
   const base = ["acp", "--trust"];
   switch (runtimeMode) {
     case "auto":
@@ -46,7 +46,7 @@ export function bobAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string
   }
 }
 
-export function buildBobAcpSpawnInput(
+function buildBobAcpSpawnInput(
   bobSettings: BobAcpRuntimeBobSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
@@ -65,7 +65,7 @@ export function buildBobAcpSpawnInput(
   };
 }
 
-export function resolveBobAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
+function resolveBobAuthMethodId(environment: NodeJS.ProcessEnv | undefined): string {
   return environment?.[BOB_API_KEY_ENV]?.trim() ? BOB_AUTH_METHOD_API_KEY : BOB_AUTH_METHOD_SSO;
 }
 
@@ -73,40 +73,34 @@ interface BobAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "authMethodId" | "clientCapabilities" | "spawn"
 > {
-  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly bobSettings: BobAcpRuntimeBobSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
   readonly runtimeMode?: RuntimeMode;
 }
 
-export const makeBobAcpRuntime = (
+export const makeBobAcpRuntime = Effect.fn("BobAcpSupport.makeRuntime")(function* (
   input: BobAcpRuntimeInput,
-): Effect.Effect<
+): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...input,
-        spawn: buildBobAcpSpawnInput(
-          input.bobSettings,
-          input.cwd,
-          input.environment,
-          input.runtimeMode,
-        ),
-        authMethodId: resolveBobAuthMethodId(input.environment),
-      }).pipe(
-        Layer.provide(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-        ),
+  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
+> {
+  const acpContext = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...input,
+      spawn: buildBobAcpSpawnInput(
+        input.bobSettings,
+        input.cwd,
+        input.environment,
+        input.runtimeMode,
       ),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-  });
+      authMethodId: resolveBobAuthMethodId(input.environment),
+    }),
+  );
+  return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    Effect.provide(acpContext),
+  );
+});
 
 /**
  * T3's built-in Bob model slug. Selecting it means "use whatever model the

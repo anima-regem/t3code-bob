@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -83,7 +83,7 @@ function bobMessage(overrides: {
 
 describe("readBobDatabaseRecords", () => {
   it("returns empty array when the database file does not exist", async () => {
-    const records = readBobDatabaseRecords("/nonexistent/path/bob.db", 0, Date.now());
+    const records = readBobDatabaseRecords("/nonexistent/path/bob.db", 0, Number.MAX_SAFE_INTEGER);
     assert.strictEqual(records.length, 0);
   });
 
@@ -102,7 +102,7 @@ describe("readBobDatabaseRecords", () => {
       },
     ]);
     try {
-      const records = readBobDatabaseRecords(dbPath, 0, Date.now() + 1_000_000);
+      const records = readBobDatabaseRecords(dbPath, 0, Number.MAX_SAFE_INTEGER);
       assert.strictEqual(records.length, 1);
       const rec = records[0]!;
       assert.strictEqual(rec.provider, "bob");
@@ -131,7 +131,7 @@ describe("readBobDatabaseRecords", () => {
       },
     ]);
     try {
-      const records = readBobDatabaseRecords(dbPath, 0, Date.now() + 1_000_000);
+      const records = readBobDatabaseRecords(dbPath, 0, Number.MAX_SAFE_INTEGER);
       assert.strictEqual(records[0]?.model, "anthropic/claude-3-7-sonnet");
     } finally {
       await cleanup();
@@ -147,7 +147,7 @@ describe("readBobDatabaseRecords", () => {
       },
     ]);
     try {
-      const records = readBobDatabaseRecords(dbPath, 0, Date.now() + 1_000_000);
+      const records = readBobDatabaseRecords(dbPath, 0, Number.MAX_SAFE_INTEGER);
       assert.strictEqual(records[0]?.model, "bob");
     } finally {
       await cleanup();
@@ -198,7 +198,7 @@ describe("readBobDatabaseRecords", () => {
       },
     ]);
     try {
-      const records = readBobDatabaseRecords(dbPath, 0, Date.now() + 1_000_000);
+      const records = readBobDatabaseRecords(dbPath, 0, Number.MAX_SAFE_INTEGER);
       assert.strictEqual(records.length, 0);
     } finally {
       await cleanup();
@@ -218,7 +218,7 @@ describe("readBobDatabaseRecords", () => {
       },
     ]);
     try {
-      const records = readBobDatabaseRecords(dbPath, 0, Date.now() + 1_000_000);
+      const records = readBobDatabaseRecords(dbPath, 0, Number.MAX_SAFE_INTEGER);
       assert.strictEqual(records.length, 0);
     } finally {
       await cleanup();
@@ -234,7 +234,7 @@ describe("readBobDatabaseRecords", () => {
       },
     ]);
     try {
-      const records = readBobDatabaseRecords(dbPath, 0, Date.now() + 1_000_000);
+      const records = readBobDatabaseRecords(dbPath, 0, Number.MAX_SAFE_INTEGER);
       // reasoningTokens must be clamped to outputTokens=30
       assert.strictEqual(records[0]?.totals.reasoningTokens, 30);
     } finally {

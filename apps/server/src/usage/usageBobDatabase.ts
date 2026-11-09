@@ -1,28 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * Usage reader for IBM Bob Shell's SQLite database (`~/.bob/db/bob.db`).
- *
- * Bob stores per-message token spend in the `messages` table's `data` JSON
- * column rather than writing JSONL transcript files. This module queries the
- * database read-only and converts assistant messages that carry `_meta.spend`
- * into the same {@link UsageRecord} shape used by the other providers.
- *
- * The `tasks` table links messages to sessions (task IDs) and carries the wall
- * timestamp; `messages.created_at` mirrors this. Model is not stored per
- * message — Bob uses a single configured model per session, reported via
- * the `model/info` API endpoint but not persisted — so every record uses the
- * model slug from `tasks.env._meta.commandSecurityModel` when present, falling
- * back to the literal `"bob"`.
- *
- * Bob's `spend.input` is *inclusive* of `cacheRead` and `cacheWrite`, matching
- * the Codex / Grok convention. `uncachedInputTokens` is derived by subtraction.
- *
- * @module usageBobDatabase
- */
+// Bob stores per-message spend in SQLite. Read it without locking out the CLI.
 import * as NodeSqlite from "node:sqlite";
 
-import type { UsageRecord } from "./usageTranscripts.ts";
-import { totalTokens } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
+import { totalTokens } from "@t3tools/provider-core/server/usage";
 
 /**
  * One row returned by the query, with just the fields we need.
@@ -37,17 +18,7 @@ interface BobMessageRow {
   readonly task_model: string | null;
 }
 
-/**
- * Reads all Bob assistant messages in the given time window from the database
- * at `dbPath` and returns them as {@link UsageRecord}s.
- *
- * The database is opened read-only so the call is safe while Bob has the file
- * open for writing. Returns an empty array when the file does not exist or
- * cannot be opened — the same contract as a missing transcript directory.
- *
- * `sinceMs` / `untilMs` are inclusive / exclusive epoch-millisecond bounds
- * that map to `messages.created_at` (which Bob stores as epoch milliseconds).
- */
+// Bounds apply to messages.created_at in epoch milliseconds (inclusive/exclusive).
 export function readBobDatabaseRecords(
   dbPath: string,
   sinceMs: number,
@@ -150,6 +121,7 @@ function parseBobRow(row: BobMessageRow): UsageRecord | null {
   // one Bob task and maps cleanly to a "session" for bucketing purposes.
   return {
     provider: "bob" as const,
+    speed: "standard",
     timestampMs,
     model,
     sessionId: row.task_id,

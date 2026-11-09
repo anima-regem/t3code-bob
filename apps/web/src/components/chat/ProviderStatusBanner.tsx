@@ -1,29 +1,41 @@
-import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { memo } from "react";
+import {
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { memo, useRef, useState } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { RefreshIcon } from "../ui/refresh-icon";
 
-/** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
 function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
-  return compatibility?.status === "unsupported" || compatibility?.status === "broken"
+  if (status.status === "error" && status.auth.status === "unauthenticated") return null;
+  return compatibility?.status === "broken" ||
+    (status.status === "ready" && compatibility?.status === "unsupported")
     ? compatibility
     : null;
 }
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
   if (!status || status.status === "disabled") return null;
-  if (status.status === "ready") {
-    const incompatible = getIncompatibleVersion(status);
-    return incompatible
-      ? [status.instanceId, incompatible.status, status.version ?? ""].join("\u0000")
-      : null;
+  const incompatible = getIncompatibleVersion(status);
+  if (incompatible) {
+    return [
+      status.instanceId,
+      incompatible.status,
+      status.version ?? "",
+      incompatible.message ?? "",
+    ].join("\u0000");
   }
-  // Antigravity checks saved credentials when a session starts. Its local
-  // health check leaves auth unknown after a restart, which is not a failure.
+  if (status.status === "ready") return null;
+  // Antigravity validates credentials at session start; unknown restart auth is not failure.
   if (
     status.driver === "antigravity" &&
     status.installed &&
@@ -53,8 +65,14 @@ export function hasProviderSetup(status: ServerProvider): boolean {
   );
 }
 
-/** Keep the environment's error intact in both the banner and model picker. */
 export function getProviderStatusMessage(status: ServerProvider): string {
+  if (
+    status.auth.status !== "unauthenticated" &&
+    status.compatibilityAdvisory?.status === "broken" &&
+    status.compatibilityAdvisory.message
+  ) {
+    return status.compatibilityAdvisory.message;
+  }
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
@@ -76,28 +94,50 @@ export function getProviderStatusMessage(status: ServerProvider): string {
 }
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
+  environmentId,
   onDismiss,
   onOpenProviderSetup,
   status,
 }: {
+  environmentId: EnvironmentId;
   onDismiss: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
+  const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    label: "Refresh provider status",
+  });
+  const refreshingRef = useRef(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const refresh = async () => {
+    if (!status || !canRefresh || refreshingRef.current) return;
+    refreshingRef.current = true;
+    setIsRefreshing(true);
+    await refreshProviders({
+      environmentId,
+      input: { instanceId: status.instanceId, refreshModels: true },
+    });
+    refreshingRef.current = false;
+    setIsRefreshing(false);
+  };
+
   if (!status || getProviderStatusBannerKey(status) === null) {
     return null;
   }
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
-  const incompatible = status.status === "ready" ? getIncompatibleVersion(status) : null;
+  const incompatible = getIncompatibleVersion(status);
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
     : incompatible
       ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
       : `${providerName} provider status`;
   const message = incompatible?.message ?? getProviderStatusMessage(status);
-  const isWarning = status.status === "warning" || incompatible !== null;
+  const isWarning =
+    incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
@@ -110,17 +150,31 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         <InfoIcon />
         <AlertTitle>{title}</AlertTitle>
         <AlertDescription>
-          <Tooltip>
-            <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
-            <TooltipPopup side="top" className="whitespace-pre-wrap">
-              {message}
-            </TooltipPopup>
-          </Tooltip>
-          {onOpenProviderSetup && hasProviderSetup(status) ? (
-            <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-              Open provider setup
-            </InlineButton>
-          ) : null}
+          <div className="flex flex-col gap-2">
+            <Tooltip>
+              <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
+              <TooltipPopup side="top" className="whitespace-pre-wrap">
+                {message}
+              </TooltipPopup>
+            </Tooltip>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {onOpenProviderSetup && hasProviderSetup(status) ? (
+                <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
+                  Open provider setup
+                </InlineButton>
+              ) : null}
+              <Button
+                aria-label={`Refresh ${providerName} provider status`}
+                disabled={!canRefresh || isRefreshing}
+                onClick={() => void refresh()}
+                size="xs"
+                variant="outline"
+              >
+                <RefreshIcon />
+                {isRefreshing ? "Refreshing..." : "Refresh"}
+              </Button>
+            </div>
+          </div>
         </AlertDescription>
         <AlertAction>
           <Button
